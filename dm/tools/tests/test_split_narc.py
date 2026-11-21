@@ -100,6 +100,22 @@ class LooseNarc(unittest.TestCase):
         (_, keys, pairs, extra), log = self.scan(archive([member(0x10, b'BNTX' + bytes(64)), b'']))
         self.assertEqual((keys, pairs, extra, log), ({}, set(), {}, ''))
 
+    def test_malformed_narc_names_the_layout(self):
+        missing = struct.pack('<4sHHIHH', b'NARC', 0xfffe, 0, 16, 16, 0)
+        small_section = bytearray(archive([b'abc']))
+        struct.pack_into('<I', small_section, 20, 4)
+        short_table = bytearray(archive([b'abc']))
+        struct.pack_into('<I', short_table, 24, 2)
+        past_image = bytearray(archive([b'abc']))
+        struct.pack_into('<I', past_image, 32, len(past_image))
+        for data in (b'NARC', missing, bytes(small_section), bytes(short_table), bytes(past_image)):
+            with self.subTest(data=data), self.assertRaisesRegex(SystemExit, r'^\[RED\] /fuzz: NARC:'):
+                ss.scan_blob(data, '/fuzz', [])
+            (_, keys, pairs, extra), log = self.scan(data)
+            self.assertEqual((keys, pairs, extra[0]), ({}, set(), 'unreadable'))
+            self.assertIn('NARC:', log)
+            self.assertNotIn('struct.error', log)
+
     def test_cli_matches_a_plain_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); rom = root / 'RomFS'; rom.mkdir()
