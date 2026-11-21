@@ -5,6 +5,9 @@ import json, os, re, struct, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
+sys.path.insert(0, str(TOOLS))
+import dmsh_fetch
+
 EXIT = (0x000fea0003800000, 0x000000000000794d)   # hi, lo: EXIT
 # SUATOM.ADD.U32 R12, [R3], R12 on the 1D image whose handle is word 12 of c0 (AMapC0: image slot 1), as the game encodes it but unpredicated (PT)
 SUATOM = (0x002ea200001ee000, 0x00000c0c030c7593)
@@ -444,7 +447,8 @@ class Pokopia(Translated):
         return self.translate(b''.join(inst(*c) for c in code) + inst(*SUATOM) + inst(*EXIT))
 
     def test_merge_shifts_c_into_the_high_half(self):   # word 6, converted first, ends in the high half; word 5 in the low one
-        msl = self.msl(self.MERGE_FIRST, self.MERGE_SECOND)
+        # Ignore the uniform bounds guards when checking how the two halves are packed.
+        msl = dmsh_fetch.unguard(self.msl(self.MERGE_FIRST, self.MERGE_SECOND))
         high = re.search(r'uint (_\d+) = as_type<uint>\(half2\(float2\(\(\*spvDescriptorSet0\.cp_c3\)\._m0\[1\]\.z, 0\.0\)\)\);', msl)
         low = re.search(r'uint (_\d+) = as_type<uint>\(half2\(float2\(\(\*spvDescriptorSet0\.cp_c3\)\._m0\[1\]\.y, 0\.0\)\)\);', msl)
         self.assertTrue(high and low, msl)
@@ -453,13 +457,14 @@ class Pokopia(Translated):
         self.assertRegex(msl, rf'{shifted.group(1)} \| int\({low.group(1)}\)')
 
     def test_merge_with_rz_in_c_is_the_low_half_alone(self):
-        msl = self.msl(self.MERGE_FIRST)
+        msl = dmsh_fetch.unguard(self.msl(self.MERGE_FIRST))
         self.assertRegex(msl, r'as_type<uint>\(half2\(float2\(\(\*spvDescriptorSet0\.cp_c3\)\._m0\[1\]\.z, 0\.0\)\)\)')
         self.assertNotIn('<< 16', msl)
 
     def test_f2i_reads_the_selected_half(self):   # the merge left its float in the low half and zero in the high one; the translator folds the pack and unpack
         self.assertIn('trunc(0.0)', self.msl(self.MERGE_FIRST, self.F2I_HIGH))
-        self.assertRegex(self.msl(self.MERGE_FIRST, self.F2I_LOW), r'trunc\(\(\*spvDescriptorSet0\.cp_c3\)\._m0\[1\]\.z\)')
+        msl = dmsh_fetch.unguard(self.msl(self.MERGE_FIRST, self.F2I_LOW))
+        self.assertRegex(msl, r'trunc\(\(\*spvDescriptorSet0\.cp_c3\)\._m0\[1\]\.z\)')
 
     def test_1d_fetch_wraps_into_rows(self):   # a texture buffer in the slot is bound as rows of 16384 texels (nvn_mtl.m tbuf_as_2d); a 1D texture, one row, reads the same texel
         msl = self.msl(self.MERGE_FIRST, self.TLD_1D)
